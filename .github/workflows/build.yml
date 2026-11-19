@@ -1,0 +1,64 @@
+name: APK bauen
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'meintraining.zip'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository holen
+        uses: actions/checkout@v4
+
+      - name: Projekt entpacken
+        run: |
+          unzip -q -o meintraining.zip -d proj
+          ls -la proj
+
+      - name: Java einrichten
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle einrichten
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Android-SDK vorbereiten
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null || true
+
+      - name: Übungsdatenbank laden
+        run: |
+          mkdir -p proj/app/src/main/assets/www/data
+          F=proj/app/src/main/assets/www/data/exercises.json
+          curl -fsSL --retry 3 -o "$F" https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json || { rm -f "$F"; echo "Datenbank nicht geladen, die App nutzt dann die Notfall-Liste"; }
+          ls -la proj/app/src/main/assets/www/data
+
+      - name: APK bauen
+        working-directory: proj
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: APK als Download bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeinTraining-APK
+          path: proj/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Release mit APK anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp proj/app/build/outputs/apk/debug/app-debug.apk MeinTraining.apk
+          gh release create "build-${{ github.run_number }}" MeinTraining.apk --title "Build ${{ github.run_number }}" --notes "Mein Training, Build ${{ github.run_number }}"
